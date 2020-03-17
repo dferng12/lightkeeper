@@ -4,9 +4,11 @@ import time
 from random import choice
 from pprint import pprint
 
+#TODO https://docs.python.org/3/library/configparser.html
+
 root_backup_folder = '/backups'
 invalid_mounts = ['/var/run', '/dev']
-
+silent = False
 
 class bcolors:
     HEADER = '\033[95m'
@@ -24,10 +26,11 @@ def print_stat(container_name, filename):
 
 def dump_data(container, file_or_folder, destination_path):
     f = open('{}.tar'.format(destination_path), 'wb')
-    bits, stat = container.get_archive(file_or_folder)
+    bits, _ = container.get_archive(file_or_folder)
 
     for chunk in bits:
-        print_stat(container.name, file_or_folder)
+        if not silent:
+            print_stat(container.name, file_or_folder)
         f.write(chunk)
     f.close()
 
@@ -44,7 +47,7 @@ containers = client.containers.list()
 for container in containers:
     mounts = container.attrs['Mounts']
     container_name = container.name[: container.name.index('.') if '.' in container.name else len(container.name)]
-
+    
     clean_mounts = list(filter(lambda mount: is_valid_mount(mount['Source']), mounts))
     destination_path = '{root_backup_folder}/{container}/{date}/'.format(root_backup_folder=root_backup_folder, container=container_name, date=time.strftime('%m-%d-%y'))
 
@@ -53,4 +56,5 @@ for container in containers:
         filename = mount['Destination'].replace('/', '-')[1:]        
         dump_data(container, mount['Destination'], destination_path + filename)
         
-        print(' [{color_green}OK{end_color}] Dumping contents of {container}: {filename}'.format(container=container_name, filename=mount['Destination'], color_green=bcolors.OKGREEN, end_color=bcolors.ENDC))
+        if not silent:
+            print(' [{color_green}OK{end_color}] Dumping contents of {container}: {filename}'.format(container=container_name, filename=mount['Destination'], color_green=bcolors.OKGREEN, end_color=bcolors.ENDC))
