@@ -1,60 +1,55 @@
 import docker
 import os
 import time
-from random import choice
-from pprint import pprint
+import ast
+import configparser
+from logger import print_save_finished, print_save_stat, parse_container_name
 
-#TODO https://docs.python.org/3/library/configparser.html
+### Config 
+config = configparser.ConfigParser()
+config.read('config.ini')
 
-root_backup_folder = '/backups'
-invalid_mounts = ['/var/run', '/dev']
-silent = False
+root_backup_folder = config['Public']['BackupFolder']
+ignored_mounts = ast.literal_eval((config['Saver']['IgnoredMounts']))
+quiet = config.getboolean('Public','Quiet')
+date_format = config['Public']['DateFormat']
 
-class bcolors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
-
-def print_stat(container_name, filename):
-    random_char = ['_', '\\', '/', '|', '-', '.']
-    print(' [{random}] Dumping contents of {container}: {filename}'.format(container=container.name[: container.name.index('.') if '.' in container.name else len(container.name)], filename=filename, random=choice(random_char)), end='\r')
-
+### Functions
 def dump_data(container, file_or_folder, destination_path):
     f = open('{}.tar'.format(destination_path), 'wb')
     bits, _ = container.get_archive(file_or_folder)
 
+    if not quiet: 
+        container_name = parse_container_name(container.name)
+        print_save_stat(container_name, file_or_folder, already_printed=False)
+
     for chunk in bits:
-        if not silent:
-            print_stat(container.name, file_or_folder)
+        if not quiet: print_save_stat(container_name, file_or_folder, already_printed=True)
         f.write(chunk)
     f.close()
 
+    if not quiet: print_save_finished(container_name, destination_path)
+
 def is_valid_mount(mount):
-    for invalid_mount in invalid_mounts:
+    for invalid_mount in ignored_mounts:
         if invalid_mount in mount:
             return False
-    
     return True
 
-client = docker.from_env()
-containers = client.containers.list()
+def create_backup():
+    client = docker.from_env()
+    containers = client.containers.list()
 
-for container in containers:
-    mounts = container.attrs['Mounts']
-    container_name = container.name[: container.name.index('.') if '.' in container.name else len(container.name)]
-    
-    clean_mounts = list(filter(lambda mount: is_valid_mount(mount['Source']), mounts))
-    destination_path = '{root_backup_folder}/{container}/{date}/'.format(root_backup_folder=root_backup_folder, container=container_name, date=time.strftime('%m-%d-%y'))
-
-    os.makedirs(destination_path, exist_ok=True)
-    for mount in clean_mounts:
-        filename = mount['Destination'].replace('/', '-')[1:]        
-        dump_data(container, mount['Destination'], destination_path + filename)
+    for container in containers:
+        mounts = container.attrs['Mounts']
+        container_name = parse_container_name(container.name)
         
-        if not silent:
-            print(' [{color_green}OK{end_color}] Dumping contents of {container}: {filename}'.format(container=container_name, filename=mount['Destination'], color_green=bcolors.OKGREEN, end_color=bcolors.ENDC))
+        clean_mounts = list(filter(lambda mount: is_valid_mount(mount['Source']), mounts))
+        destination_path = '{root_backup_folder}/{container}/{date}/'.format(root_backup_folder=root_backup_folder, container=container_name, date=time.strftime(date_format))
+
+        os.makedirs(destination_path, exist_ok=True)
+        for mount in clean_mounts:
+            filename = mount['Destination'].replace('/', '-')[1:]        
+            dump_data(container, mount['Destination'], destination_path + filename)
+
+create_backup()

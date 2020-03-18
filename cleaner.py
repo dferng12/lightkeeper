@@ -2,12 +2,19 @@ import os
 import shutil
 import time
 import datetime
-from pprint import pprint
+import configparser
+from logger import print_info_deleted
 
-root_backup_folder = './backups/' #WITH THE SLASH
-history_amount = 4
-date_format = '%m-%d-%Y'
+### Config 
+config = configparser.ConfigParser()
+config.read('config.ini')
 
+root_backup_folder = config['Public']['BackupFolder']
+history_amount = config.getint('Cleaner','StoredBackups')
+quiet = config.getboolean('Public','Quiet')
+date_format = config['Public']['DateFormat']
+
+### Functions
 def get_oldest_backups(backups):
     timestamps = {}
     for backup in backups:
@@ -18,11 +25,11 @@ def get_oldest_backups(backups):
 def get_oldest_paths():
     services = []
     to_delete = []
-    
+        
     for r, d, _ in os.walk(root_backup_folder):
         if r == root_backup_folder:
             services = list(map(lambda item: root_backup_folder + item, d))
-
+        
         if r in services:
             if len(d) > history_amount:
                 oldest = get_oldest_backups(d)
@@ -32,6 +39,8 @@ def get_oldest_paths():
 
 def delete_folders(folders):
     for folder in folders:
+        if not quiet: print_info_deleted(folder, False)
         shutil.rmtree(folder)
+        if not quiet: print_info_deleted(folder, True)
 
 delete_folders(get_oldest_paths())
