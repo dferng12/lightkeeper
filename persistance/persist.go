@@ -20,7 +20,7 @@ func checkErr(err error) {
 	}
 }
 
-func GetContainers() []types.Container {
+func GetMounts() []types.MountPoint {
 	cli, err := docker.NewEnvClient()
 	if err != nil {
 		panic(err)
@@ -31,7 +31,14 @@ func GetContainers() []types.Container {
 		panic(err)
 	}
 
-	return containers
+	mountList := []types.MountPoint{}
+
+	for _, container := range containers {
+		for _, mount := range container.Mounts {
+			mountList = append(mountList, mount)
+		}
+	}
+	return mountList
 }
 
 func StoreFromContainer(container types.Container, path string) bool {
