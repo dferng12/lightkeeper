@@ -5,8 +5,8 @@ import (
 )
 
 func main() {
-	persistance.GetContainers()
-	//persistance.StoreFromContainer(containers[0], "/var/log")
+	containers := persistance.GetContainers()
+	persistance.StoreFromContainer(containers[0])
 
 	//persistance.Untartar("var-log.tar", "./")
 }

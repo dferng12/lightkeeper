@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"docker.io/go-docker"
 	"docker.io/go-docker/api/types"
@@ -20,45 +21,42 @@ func checkErr(err error) {
 	}
 }
 
-func GetMounts() []types.MountPoint {
+const originPath string = "./backups/"
+
+func GetContainers() []types.Container {
 	cli, err := docker.NewEnvClient()
-	if err != nil {
-		panic(err)
-	}
+	checkErr(err)
 
 	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{})
-	if err != nil {
-		panic(err)
-	}
+	checkErr(err)
 
-	mountList := []types.MountPoint{}
-
-	for _, container := range containers {
-		for _, mount := range container.Mounts {
-			mountList = append(mountList, mount)
-		}
-	}
-	return mountList
+	return containers
 }
 
-func StoreFromContainer(container types.Container, path string) bool {
+func StoreFromContainer(container types.Container) bool {
 	cli, err := docker.NewEnvClient()
 	checkErr(err)
 
-	data, _, err := cli.CopyFromContainer(context.Background(), container.ID[:10], path)
-	defer data.Close()
-	checkErr(err)
+	destPath := originPath + container.Names[0] + "/" + time.Now().Format("02-01-2006") + "/"
+	os.MkdirAll(destPath, os.ModePerm)
 
-	buf, err := ioutil.ReadAll(data)
-	checkErr(err)
+	for _, mount := range container.Mounts {
+		path := mount.Destination
+		data, _, err := cli.CopyFromContainer(context.Background(), container.ID[:10], path)
+		defer data.Close()
+		checkErr(err)
 
-	f, err := os.Create(strings.Replace(path[1:]+".tar", "/", "-", -1))
-	checkErr(err)
+		buf, err := ioutil.ReadAll(data)
+		checkErr(err)
 
-	n2, err := f.Write(buf)
-	checkErr(err)
+		f, err := os.Create(destPath + strings.Replace(string(mount.Type)+"--"+path[1:]+".tar", "/", "-", -1))
+		checkErr(err)
 
-	fmt.Printf("wrote %d bytes\n", n2)
+		n2, err := f.Write(buf)
+		checkErr(err)
+
+		fmt.Printf("wrote %d bytes\n", n2)
+	}
 	return true
 }
 
