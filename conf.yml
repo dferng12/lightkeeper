@@ -1,0 +1,16 @@
+containers:
+    -
+        name: test
+        image: mysql
+        ports:
+            8080: 8080
+        mounts:
+            - 
+                type: bind
+                from: /var/log
+                dstpath: /var/log
+        env:
+            test: test3
+            test1: test2
+        flags:
+            PATH: /etc/bin
