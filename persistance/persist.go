@@ -55,11 +55,13 @@ func StoreFromContainer(container types.Container) bool {
 	cli, err := docker.NewEnvClient()
 	checkErr(err)
 
+	containerConfig := config.GetContainerConfig(container.Names[0])
 	destPath := originPath + container.Names[0] + "/" + time.Now().Format("02-01-2006") + "/"
 	os.MkdirAll(destPath, os.ModePerm)
 
-	for _, mount := range container.Mounts {
-		path := mount.Destination
+	fmt.Println(containerConfig.Mounts)
+	for _, mount := range containerConfig.Mounts {
+		path := mount.DstPath
 		data, _, err := cli.CopyFromContainer(context.Background(), container.ID[:10], path)
 		defer data.Close()
 		checkErr(err)
@@ -67,7 +69,7 @@ func StoreFromContainer(container types.Container) bool {
 		buf, err := ioutil.ReadAll(data)
 		checkErr(err)
 
-		f, err := os.Create(destPath + strings.Replace(string(mount.Type)+"--"+path[1:]+".tar", "/", "-", -1))
+		f, err := os.Create(destPath + strconv.Itoa(mount.ID))
 		checkErr(err)
 
 		n2, err := f.Write(buf)
@@ -79,8 +81,9 @@ func StoreFromContainer(container types.Container) bool {
 }
 
 // GetContainerMounts returns a list of Mount which contains all the container mounts according to the backups
-func GetContainerMounts(containerName string, date string, config config.Container) (binds []Bind, volumes []Volume) {
+func GetContainerMounts(containerName string, date string) (binds []Bind, volumes []Volume) {
 	target := originPath + containerName + "/" + date + "/"
+	containerConfig := config.GetContainerConfig(containerName)
 
 	_, err := os.Stat(target)
 	if os.IsNotExist(err) {
@@ -91,28 +94,27 @@ func GetContainerMounts(containerName string, date string, config config.Contain
 	checkErr(err)
 
 	for _, file := range files {
-		mountType := strings.Split(file.Name(), "--")[0]
-		dstPath := strings.Replace("/"+strings.Split(file.Name(), "--")[1], "-", "/", -1)
-
-		if mountType == "volume" {
-			volumeName := ""
-			for _, mount := range config.Mounts {
-				if mount.DstPath == dstPath[0:len(dstPath)-4] {
-					volumeName = mount.From
-				}
+		var targetMount config.Mount
+		for _, mount := range containerConfig.Mounts {
+			currentID, _ := strconv.Atoi(file.Name())
+			if mount.ID == currentID {
+				targetMount = mount
+				break
 			}
+		}
 
-			if volumeName == "" {
-				panic("Volume not found")
-			}
+		if targetMount.Type == "" {
+			panic("Mount not found with ID " + file.Name())
+		}
 
+		if targetMount.Type == "volume" {
 			volumes = append(volumes, Volume{
-				DstPath: dstPath[0 : len(dstPath)-4],
+				DstPath: targetMount.DstPath,
 				SrcPath: target + file.Name(),
-				Name:    volumeName})
+				Name:    targetMount.From})
 		} else {
 			binds = append(binds, Bind{
-				DstPath: dstPath[0 : len(dstPath)-4],
+				DstPath: targetMount.DstPath,
 				SrcPath: target + file.Name()})
 		}
 	}
@@ -139,8 +141,12 @@ func RecreateMounts(binds []Bind, volumes []Volume, allVolumes []*types.Volume) 
 				checkErr(err)
 			}
 		}
+
+		dstItem := containerVolume.DstPath[strings.LastIndex(containerVolume.DstPath, "/"):len(containerVolume.DstPath)]
+
+		fmt.Println(dstItem)
 		checkErr(Untartar(containerVolume.SrcPath, restorePath+"tmp"))
-		deployment.CreateVolume(containerVolume.Name, restorePath+"tmp")
+		deployment.CreateVolume(containerVolume.Name, restorePath+"tmp"+dstItem)
 		err = os.RemoveAll(restorePath + "tmp")
 		checkErr(err)
 
@@ -151,6 +157,8 @@ func RecreateMounts(binds []Bind, volumes []Volume, allVolumes []*types.Volume) 
 	for _, bind := range binds {
 		bindLocalPath := strings.Replace(bind.DstPath[1:len(bind.DstPath)], "/", "-", -1)
 		targetPath := restorePath + bindLocalPath
+		dstItem := bind.DstPath[strings.LastIndex(bind.DstPath, "/"):len(bind.DstPath)]
+
 		err = os.RemoveAll(targetPath)
 		checkErr(err)
 
@@ -159,7 +167,7 @@ func RecreateMounts(binds []Bind, volumes []Volume, allVolumes []*types.Volume) 
 
 		checkErr(Untartar(bind.SrcPath, targetPath))
 
-		createdMounts = append(createdMounts, mount.Mount{Type: mount.Type("bind"), Source: targetPath, Target: bind.DstPath})
+		createdMounts = append(createdMounts, mount.Mount{Type: mount.Type("bind"), Source: targetPath + dstItem, Target: bind.DstPath})
 	}
 
 	return createdMounts
@@ -172,21 +180,9 @@ func RecoverContainer(containerName string, date string) types.Container {
 	cli, err := docker.NewEnvClient()
 	checkErr(err)
 
-	allConfig := config.ConfigData
-	var containerConfig config.Container
+	containerConfig := config.GetContainerConfig(containerName)
 
-	for _, config := range allConfig.Containers {
-		if "/"+config.Name == containerName {
-			containerConfig = config
-			break
-		}
-	}
-
-	if containerConfig.Name == "" {
-		panic("Container config not found")
-	}
-
-	containerBinds, containerVolumes := GetContainerMounts(containerName, date, containerConfig)
+	containerBinds, containerVolumes := GetContainerMounts(containerName, date)
 	// If the container is running, stop it and delete it
 	if containerName != "" {
 		containers := deployment.GetContainers()

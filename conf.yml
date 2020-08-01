@@ -6,11 +6,13 @@ containers:
             8080: "80/tcp"
         mounts:
             - 
+                ID: 0
                 type: bind
                 from: /home/litios/test
                 dstpath: /tmp/test1
             
             -
+                ID: 1
                 type: volume
                 from: test
                 dstpath: /tmp/test2

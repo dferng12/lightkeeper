@@ -11,6 +11,6 @@ func main() {
 	containers := deployment.GetContainers()
 	//persistance.StoreFromContainer(containers[0])
 
-	persistance.RecoverContainer(containers[0].Names[0], "31-07-2020")
+	persistance.RecoverContainer(containers[0].Names[0], "01-08-2020")
 	//persistance.Untartar("var-log.tar", "./")
 }
