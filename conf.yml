@@ -1,16 +1,18 @@
 containers:
     -
-        name: test
-        image: mysql
+        name: blissful_euler
+        image: nginx
         ports:
-            8080: 8080
+            8080: "80/tcp"
         mounts:
             - 
                 type: bind
-                from: /var/log
-                dstpath: /var/log
+                from: /home/litios/test
+                dstpath: /tmp/test1
+            
+            -
+                type: volume
+                from: test
+                dstpath: /tmp/test2
         env:
-            test: test3
-            test1: test2
-        flags:
-            PATH: /etc/bin
+            - "MYVAR=/etc/bin"

@@ -6,14 +6,23 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"liti0s/litios/lightkeeper/config"
+	"liti0s/litios/lightkeeper/deployment"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"docker.io/go-docker/api/types/network"
+
+	"github.com/docker/go-connections/nat"
+
 	"docker.io/go-docker"
 	"docker.io/go-docker/api/types"
+	"docker.io/go-docker/api/types/container"
 	"docker.io/go-docker/api/types/filters"
+	"docker.io/go-docker/api/types/mount"
 )
 
 func checkErr(err error) {
@@ -22,14 +31,21 @@ func checkErr(err error) {
 	}
 }
 
-// Mount holds the info for the mounts of a container
-type Mount struct {
-	Type        string // Mount or bind
-	Path        string
-	DockerMount types.Volume // Real docker struct
+type Volume struct {
+	Name    string
+	SrcPath string
+	DstPath string
 }
 
-const originPath string = "./backups/"
+type Bind struct {
+	SrcPath string
+	DstPath string
+}
+
+const originPath string = "/home/litios/Projects/lightkeeper/backups"
+const restorePath string = "/tmp/lightkeeper/"
+
+//TODO CHECK IF RESTOREPATH EXISTS
 
 // StoreFromContainer persists the container data in the mounts
 // It retrieves the data and generates the tars in the originPath folder
@@ -62,20 +78,9 @@ func StoreFromContainer(container types.Container) bool {
 	return true
 }
 
-// GetContainers returns a list of the current running containers
-func GetContainers() (containers []types.Container) {
-	cli, err := docker.NewEnvClient()
-	checkErr(err)
-
-	containers, err = cli.ContainerList(context.Background(), types.ContainerListOptions{})
-	checkErr(err)
-
-	return
-}
-
 // GetContainerMounts returns a list of Mount which contains all the container mounts according to the backups
-func GetContainerMounts(containerName string, date string) (mounts []Mount) {
-	target := originPath + "/" + date + "/"
+func GetContainerMounts(containerName string, date string, config config.Container) (binds []Bind, volumes []Volume) {
+	target := originPath + containerName + "/" + date + "/"
 
 	_, err := os.Stat(target)
 	if os.IsNotExist(err) {
@@ -86,50 +91,131 @@ func GetContainerMounts(containerName string, date string) (mounts []Mount) {
 	checkErr(err)
 
 	for _, file := range files {
-		mounts = append(mounts, Mount{
-			Type: strings.Split(file.Name(), "--")[0],
-			Path: strings.Replace("/"+strings.Split(file.Name(), "--")[1], "-", "/", -1)})
+		mountType := strings.Split(file.Name(), "--")[0]
+		dstPath := strings.Replace("/"+strings.Split(file.Name(), "--")[1], "-", "/", -1)
+
+		if mountType == "volume" {
+			volumeName := ""
+			for _, mount := range config.Mounts {
+				if mount.DstPath == dstPath[0:len(dstPath)-4] {
+					volumeName = mount.From
+				}
+			}
+
+			if volumeName == "" {
+				panic("Volume not found")
+			}
+
+			volumes = append(volumes, Volume{
+				DstPath: dstPath[0 : len(dstPath)-4],
+				SrcPath: target + file.Name(),
+				Name:    volumeName})
+		} else {
+			binds = append(binds, Bind{
+				DstPath: dstPath[0 : len(dstPath)-4],
+				SrcPath: target + file.Name()})
+		}
 	}
 
 	return
 }
 
-// RecoverContainer is the main function for recovery
-// It stops the container, cleans the already created volumes and recreates the container
-// The date specifies the selected backup to be recovered
-func RecoverContainer(containerName string, date string) {
+func RecreateMounts(binds []Bind, volumes []Volume, allVolumes []*types.Volume) []mount.Mount {
 	cli, err := docker.NewEnvClient()
 	checkErr(err)
 
-	containerBackupMounts := GetContainerMounts(containerName, date)
-	args := filters.NewArgs(filters.Arg("name", "name="+containerName))
-	volumes, err := cli.VolumeList(context.Background(), args)
+	createdMounts := []mount.Mount{}
+	err = os.RemoveAll(restorePath + "tmp")
+	checkErr(err)
 
-	// If the container is running, stop it and delete it
-	if containerName != "" {
-		containers := GetContainers()
-		duration := time.Duration(5000000000)
-		for _, container := range containers {
-			if container.Names[0] == containerName {
-				err = cli.ContainerStop(context.Background(), containerName, &duration)
-				checkErr(err)
-				err = cli.ContainerRemove(context.Background(), containerName, types.ContainerRemoveOptions{RemoveVolumes: true})
-				checkErr(err)
+	for _, containerVolume := range volumes {
+		err := os.Mkdir(restorePath+"tmp", 0755)
+		checkErr(err)
 
+		for _, volume := range allVolumes {
+			if containerVolume.DstPath == volume.Mountpoint {
+				fmt.Println("Removing volume", volume.Name)
+				err = cli.VolumeRemove(context.Background(), volume.Name, true)
+				checkErr(err)
 			}
 		}
-	} else { // else, check that volumes doesn't exist
-		for _, mount := range containerBackupMounts {
-			if mount.Type == "volume" {
-				for _, volume := range volumes.Volumes {
-					if mount.Path == volume.Mountpoint {
-						err = cli.VolumeRemove(context.Background(), volume.Name, true)
-						checkErr(err)
-					}
-				}
+		checkErr(Untartar(containerVolume.SrcPath, restorePath+"tmp"))
+		deployment.CreateVolume(containerVolume.Name, restorePath+"tmp")
+		err = os.RemoveAll(restorePath + "tmp")
+		checkErr(err)
+
+		createdMounts = append(createdMounts, mount.Mount{Type: mount.Type("volume"), Source: containerVolume.Name, Target: containerVolume.DstPath})
+
+	}
+
+	for _, bind := range binds {
+		bindLocalPath := strings.Replace(bind.DstPath[1:len(bind.DstPath)], "/", "-", -1)
+		targetPath := restorePath + bindLocalPath
+		err = os.RemoveAll(targetPath)
+		checkErr(err)
+
+		err := os.Mkdir(targetPath, 0755)
+		checkErr(err)
+
+		checkErr(Untartar(bind.SrcPath, targetPath))
+
+		createdMounts = append(createdMounts, mount.Mount{Type: mount.Type("bind"), Source: targetPath, Target: bind.DstPath})
+	}
+
+	return createdMounts
+}
+
+// RecoverContainer is the main function for recovery
+// It stops the container, cleans the already created volumes and recreates the container
+// The date specifies the selected backup to be recovered
+func RecoverContainer(containerName string, date string) types.Container {
+	cli, err := docker.NewEnvClient()
+	checkErr(err)
+
+	allConfig := config.ConfigData
+	var containerConfig config.Container
+
+	for _, config := range allConfig.Containers {
+		if "/"+config.Name == containerName {
+			containerConfig = config
+			break
+		}
+	}
+
+	if containerConfig.Name == "" {
+		panic("Container config not found")
+	}
+
+	containerBinds, containerVolumes := GetContainerMounts(containerName, date, containerConfig)
+	// If the container is running, stop it and delete it
+	if containerName != "" {
+		containers := deployment.GetContainers()
+		for _, container := range containers {
+			if container.Names[0] == containerName {
+				deployment.StopContainer(containerName)
+				deployment.RemoveContainer(containerName)
 			}
 		}
 	}
+
+	args := filters.NewArgs(filters.Arg("name", "name="+containerName))
+	volumes, err := cli.VolumeList(context.Background(), args)
+	mounts := RecreateMounts(containerBinds, containerVolumes, volumes.Volumes)
+
+	ports := nat.PortMap{}
+	for hostPort, containerPort := range containerConfig.Ports {
+		hostBinding := nat.PortBinding{
+			HostIP:   "0.0.0.0",
+			HostPort: strconv.Itoa(hostPort),
+		}
+		containerPort, err := nat.NewPort(strings.Split(containerPort, "/")[1], strings.Split(containerPort, "/")[0])
+		checkErr(err)
+
+		ports[containerPort] = []nat.PortBinding{hostBinding}
+	}
+	container := deployment.LaunchContainer(containerName, container.Config{Image: containerConfig.Image, Env: containerConfig.Env}, container.HostConfig{Mounts: mounts, PortBindings: ports}, network.NetworkingConfig{})
+
+	return container
 }
 
 // Untartar deals with the process of untaring the backups

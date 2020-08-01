@@ -8,16 +8,15 @@ import (
 
 // Container contains the config to deploy the container
 type Container struct {
-	Name   string      `yaml:"name"`
-	Image  string      `yaml:"image"`
-	Ports  map[int]int `yaml:"ports"`
+	Name   string         `yaml:"name"`
+	Image  string         `yaml:"image"`
+	Ports  map[int]string `yaml:"ports"`
 	Mounts []struct {
 		Type    string `yaml:"type"`
 		From    string `yaml:"from"`
 		DstPath string `yaml:"dstpath"`
 	} `yaml:"mounts"`
-	Env   map[string]string `yaml:"env"`
-	Flags map[string]string
+	Env []string `yaml:"env"`
 }
 
 // Configuration contains the yaml data of the config file

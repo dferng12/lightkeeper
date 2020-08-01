@@ -2,16 +2,29 @@ package deployment
 
 import (
 	"context"
-	"liti0s/litios/lightkeeper/persistance"
+	"fmt"
+	"time"
 
 	"docker.io/go-docker/api/types"
 	"docker.io/go-docker/api/types/mount"
 	"docker.io/go-docker/api/types/network"
+	"docker.io/go-docker/api/types/strslice"
 	"docker.io/go-docker/api/types/volume"
 
 	"docker.io/go-docker"
 	"docker.io/go-docker/api/types/container"
 )
+
+// GetContainers returns a list of the current running containers
+func GetContainers() (containers []types.Container) {
+	cli, err := docker.NewEnvClient()
+	checkErr(err)
+
+	containers, err = cli.ContainerList(context.Background(), types.ContainerListOptions{})
+	checkErr(err)
+
+	return
+}
 
 func checkErr(err error) {
 	if err != nil {
@@ -19,11 +32,12 @@ func checkErr(err error) {
 	}
 }
 
-func CreateVolume(name string, from string) {
+func CreateVolume(name string, from string) types.Volume {
+	fmt.Println("Creating volume:", name, "from path", from)
 	cli, err := docker.NewEnvClient()
 	checkErr(err)
 
-	_, err = cli.VolumeCreate(context.Background(), volume.VolumesCreateBody{Driver: "overlay2", Name: name})
+	vol, err := cli.VolumeCreate(context.Background(), volume.VolumesCreateBody{Driver: "local", Name: name})
 	checkErr(err)
 
 	randomName := "7122b3717buassdiuh1"
@@ -32,20 +46,66 @@ func CreateVolume(name string, from string) {
 	mounts = append(mounts, mount.Mount{Type: mount.Type("volume"), Source: name, Target: "/tmp/volume"})
 	mounts = append(mounts, mount.Mount{Type: mount.Type("bind"), Source: from, Target: "/tmp/bind"})
 
-	container := LaunchContainer(randomName, container.Config{Image: "alpine"}, container.HostConfig{Mounts: mounts}, network.NetworkingConfig{})
-	cli.ContainerExecCreate(context.Background(), container.ID, types.ExecConfig{User: "root", Cmd: []string{"cp", "-rp", "/tmp/bind", "/tmp/volume"}})
+	container := LaunchContainer(randomName, container.Config{Image: "alpine:latest", Cmd: strslice.StrSlice([]string{"tail", "-f", "/dev/null"})}, container.HostConfig{Mounts: mounts}, network.NetworkingConfig{})
+	ID, err := cli.ContainerExecCreate(context.Background(), container.ID, types.ExecConfig{User: "root", Cmd: []string{"cp", "-rp", "/tmp/bind/.", "/tmp/volume"}})
+	checkErr(err)
+	err = cli.ContainerExecStart(context.Background(), ID.ID, types.ExecStartCheck{})
+	checkErr(err)
 
-	// TODO tick to check if copy finished
+	fmt.Print("Copying data to the volume...")
+	for {
+		result, err := cli.ContainerExecInspect(context.Background(), ID.ID)
+		checkErr(err)
+
+		if !result.Running {
+			fmt.Println()
+			break
+		}
+		fmt.Print(".")
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	StopContainer(randomName)
+	RemoveContainer(randomName)
+
+	return vol
+}
+
+func StopContainer(containerName string) {
+	fmt.Println("Stopping container", containerName)
+	cli, err := docker.NewEnvClient()
+	checkErr(err)
+
+	duration := time.Duration(5 * time.Second)
+	err = cli.ContainerStop(context.Background(), containerName, &duration)
+	checkErr(err)
+	fmt.Println("Container stopped")
+}
+
+func RemoveContainer(containerName string) {
+	fmt.Println("Removing container", containerName)
+	cli, err := docker.NewEnvClient()
+	checkErr(err)
+
+	err = cli.ContainerRemove(context.Background(), containerName, types.ContainerRemoveOptions{})
+	checkErr(err)
+	fmt.Println("Container removed")
 }
 
 func LaunchContainer(containerName string, containerConfig container.Config, hostConfig container.HostConfig, networkingConfig network.NetworkingConfig) types.Container {
+	fmt.Println("Launching container", containerName)
 	cli, err := docker.NewEnvClient()
 	checkErr(err)
 
 	result, err := cli.ContainerCreate(context.Background(), &containerConfig, &hostConfig, &networkingConfig, containerName)
 	checkErr(err)
 
-	containers := persistance.GetContainers()
+	err = cli.ContainerStart(context.Background(), result.ID, types.ContainerStartOptions{})
+	checkErr(err)
+
+	fmt.Println("Container started")
+
+	containers := GetContainers()
 	for _, container := range containers {
 		if container.ID == result.ID {
 			return container
