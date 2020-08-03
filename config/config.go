@@ -33,8 +33,8 @@ func checkErr(err error) {
 	}
 }
 
-// LoadConfig loads the yaml configuration file and returns a struct ready to be read
-func loadConfig() (cfg Configuration) {
+// LoadAllConfig loads the yaml configuration file and returns a struct ready to be read
+func LoadAllConfig() (cfg Configuration) {
 	f, err := os.Open("conf.yml")
 	checkErr(err)
 	defer f.Close()
@@ -47,10 +47,10 @@ func loadConfig() (cfg Configuration) {
 
 func GetContainerConfig(containerName string) Container {
 	var containerConfig Container
-	config := loadConfig()
+	config := LoadAllConfig()
 
 	for _, config := range config.Containers {
-		if "/"+config.Name == containerName {
+		if config.Name == containerName {
 			containerConfig = config
 			break
 		}

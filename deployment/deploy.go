@@ -15,15 +15,33 @@ import (
 	"docker.io/go-docker/api/types/container"
 )
 
+func IsContainerRunning(containerName string) bool {
+	returnValue := true
+	defer func() {
+		if err := recover(); err != nil {
+			returnValue = false
+		}
+	}()
+
+	GetContainer(containerName)
+	return returnValue
+}
+
 // GetContainers returns a list of the current running containers
-func GetContainers() (containers []types.Container) {
+func GetContainer(containerName string) (container types.Container) {
 	cli, err := docker.NewEnvClient()
 	checkErr(err)
 
-	containers, err = cli.ContainerList(context.Background(), types.ContainerListOptions{})
+	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{})
 	checkErr(err)
 
-	return
+	for _, container := range containers {
+		if container.Names[0] == "/"+containerName {
+			return container
+		}
+	}
+
+	panic("No such container " + containerName)
 }
 
 func checkErr(err error) {
@@ -105,12 +123,5 @@ func LaunchContainer(containerName string, containerConfig container.Config, hos
 
 	fmt.Println("Container started")
 
-	containers := GetContainers()
-	for _, container := range containers {
-		if container.ID == result.ID {
-			return container
-		}
-	}
-
-	panic("Container not running")
+	return GetContainer(containerName)
 }

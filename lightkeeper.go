@@ -1,16 +1,23 @@
 package main
 
 import (
-	"liti0s/litios/lightkeeper/deployment"
+	"fmt"
 	"liti0s/litios/lightkeeper/persistance"
+	"os"
 )
 
 func main() {
-	//fmt.Println(config)
-	//deployment.CreateVolume("test", "/home/litios/test")
-	containers := deployment.GetContainers()
-	//persistance.StoreFromContainer(containers[0])
+	if len(os.Args) < 3 {
+		fmt.Println("Usage:", os.Args[0], "action containername")
+		fmt.Println("Available actions:")
+		fmt.Println("- backup: Create backup")
+		fmt.Println("- restore: Restore container from date (mandatory)")
+		return
+	}
 
-	persistance.RecoverContainer(containers[0].Names[0], "01-08-2020")
-	//persistance.Untartar("var-log.tar", "./")
+	if os.Args[1] == "backup" {
+		persistance.StoreFromContainer(os.Args[2])
+	} else if os.Args[1] == "restore" {
+		persistance.RecoverContainer(os.Args[2], os.Args[3])
+	}
 }

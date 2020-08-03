@@ -14,13 +14,13 @@ import (
 	"strings"
 	"time"
 
+	"docker.io/go-docker/api/types/container"
 	"docker.io/go-docker/api/types/network"
 
 	"github.com/docker/go-connections/nat"
 
 	"docker.io/go-docker"
 	"docker.io/go-docker/api/types"
-	"docker.io/go-docker/api/types/container"
 	"docker.io/go-docker/api/types/filters"
 	"docker.io/go-docker/api/types/mount"
 )
@@ -45,17 +45,16 @@ type Bind struct {
 const originPath string = "/home/litios/Projects/lightkeeper/backups"
 const restorePath string = "/tmp/lightkeeper/"
 
-//TODO CHECK IF RESTOREPATH EXISTS
-
 // StoreFromContainer persists the container data in the mounts
 // It retrieves the data and generates the tars in the originPath folder
 // The backups are marked with the date and the container name
 // Name has the form: type--path.tar
-func StoreFromContainer(container types.Container) bool {
+func StoreFromContainer(containerName string) bool {
 	cli, err := docker.NewEnvClient()
 	checkErr(err)
 
-	containerConfig := config.GetContainerConfig(container.Names[0])
+	container := deployment.GetContainer(containerName)
+	containerConfig := config.GetContainerConfig(containerName)
 	destPath := originPath + container.Names[0] + "/" + time.Now().Format("02-01-2006") + "/"
 	os.MkdirAll(destPath, os.ModePerm)
 
@@ -80,11 +79,20 @@ func StoreFromContainer(container types.Container) bool {
 	return true
 }
 
+func StoreAllFromConfig() {
+	configData := config.LoadAllConfig()
+
+	for _, containerData := range configData.Containers {
+		StoreFromContainer(containerData.Name)
+	}
+}
+
 // GetContainerMounts returns a list of Mount which contains all the container mounts according to the backups
 func GetContainerMounts(containerName string, date string) (binds []Bind, volumes []Volume) {
-	target := originPath + containerName + "/" + date + "/"
+	target := originPath + "/" + containerName + "/" + date + "/"
 	containerConfig := config.GetContainerConfig(containerName)
 
+	fmt.Println(target)
 	_, err := os.Stat(target)
 	if os.IsNotExist(err) {
 		return
@@ -127,6 +135,11 @@ func RecreateMounts(binds []Bind, volumes []Volume, allVolumes []*types.Volume) 
 	checkErr(err)
 
 	createdMounts := []mount.Mount{}
+	_, err = os.Stat(restorePath)
+	if os.IsNotExist(err) {
+		os.Mkdir(restorePath, 0755)
+	}
+
 	err = os.RemoveAll(restorePath + "tmp")
 	checkErr(err)
 
@@ -183,15 +196,13 @@ func RecoverContainer(containerName string, date string) types.Container {
 	containerConfig := config.GetContainerConfig(containerName)
 
 	containerBinds, containerVolumes := GetContainerMounts(containerName, date)
+
+	fmt.Println(containerBinds)
+	fmt.Println(containerVolumes)
 	// If the container is running, stop it and delete it
-	if containerName != "" {
-		containers := deployment.GetContainers()
-		for _, container := range containers {
-			if container.Names[0] == containerName {
-				deployment.StopContainer(containerName)
-				deployment.RemoveContainer(containerName)
-			}
-		}
+	if deployment.IsContainerRunning(containerName) {
+		deployment.StopContainer(containerName)
+		deployment.RemoveContainer(containerName)
 	}
 
 	args := filters.NewArgs(filters.Arg("name", "name="+containerName))
