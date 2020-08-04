@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"liti0s/litios/lightkeeper/config"
-	"liti0s/litios/lightkeeper/deployment"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dferng12/lightkeeper/config"
+	"github.com/dferng12/lightkeeper/deployment"
 
 	"docker.io/go-docker/api/types/container"
 	"docker.io/go-docker/api/types/network"
@@ -82,6 +83,7 @@ func StoreFromContainer(containerName string) bool {
 func StoreAllFromConfig() {
 	configData := config.LoadAllConfig()
 
+	fmt.Println("Starting auto backup")
 	for _, containerData := range configData.Containers {
 		StoreFromContainer(containerData.Name)
 	}
